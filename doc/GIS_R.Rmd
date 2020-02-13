@@ -1,0 +1,450 @@
+---
+title: "GIS in R"
+author: "Yohan Min"
+date: "2/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(kableExtra)
+library(knitr)
+library(leaflet)
+library(pander)
+library(sf)
+library(tidycensus)
+library(ggplot2)
+library(dplyr)
+library(forcats)
+library(mapview)
+```
+
+## Points
+
+```{r}
+snxy <- data.frame(name = "Space Needle", x = -122.3493, y = 47.6205) 
+# x:longitude, y:latitude
+space_needle <- st_as_sf(snxy, coords = c("x", "y"), crs = 4326)
+
+print(space_needle)
+st_coordinates(space_needle)
+```
+```{r}
+shxy <- data.frame(name = "Savery Hall", x = -122.3083, y = 47.6572)
+savery_hall <- st_as_sf(shxy, coords = c("x", "y"), crs = 4326)
+
+# rbind() to put two points in one data frame
+pts <- rbind(space_needle, savery_hall)
+print(pts)
+```
+
+
+```{r}
+plot(pts$geometry, axes = TRUE)
+```
+
+## Lines
+
+```{r}
+# create a linestring sf data frame 
+lnstr <- st_sfc(st_linestring(st_coordinates(pts)), crs = 4326)
+lnstr <- as_tibble(lnstr) %>% mutate(od = "Space Needle, Savery Hall")
+
+plot(pts$geometry, axes = TRUE)
+text(x = st_coordinates(pts), labels = pts$name)
+plot(lnstr$geometry, col = 2, add = TRUE)
+
+```
+## Polygons
+
+```{r}
+
+zooxy <- data.frame(name = "Woodland Park Zoo", x = -122.3543, y = 47.6685)
+wp_zoo <- st_as_sf(zooxy, coords = c("x", "y"), crs = 4326)
+
+# rbind() to put two points in one data frame
+pts <- rbind(pts, wp_zoo)
+
+(plygn <- st_sfc(st_polygon(list(st_coordinates(rbind(pts, space_needle)))), crs = 4326))
+
+```
+```{r}
+plot(plygn, col = "cyan", axes = TRUE)
+plot(lnstr$geometry, col = 2, add = TRUE, lwd = 3)
+plot(pts$geometry, add = TRUE, cex = 2)
+text(x = st_coordinates(pts), labels = pts$name)
+```
+##  Importing spatial data sets
+
+```{r}
+# path to the data
+mydatadir <- file.path("C:", "users", Sys.getenv("USERNAME"), "Documents","study",  "UW", "GIS_R","data")
+zippolyfname <- file.path(mydatadir, "zip_poly.gdb")
+# avoid reading over and over
+if(!exists("zipcodes")){
+    zipcodes <- st_read(dsn = zippolyfname, layer = "zip_poly", as_tibble = TRUE, geometry_column = "Shape")
+}
+```
+```{r}
+# change the data frame's column names to lowercase
+colnames(zipcodes) <- tolower(colnames(zipcodes))
+# after renaming columns it is necessary to re-establish which column contains the geometry
+st_geometry(zipcodes) <- "shape"
+```
+
+```{r}
+zip_wa <- zipcodes %>% filter(state == "WA")
+head(zip_wa)
+plot(x = zip_wa$shape, axes = TRUE)
+
+```
+
+```{r}
+hospitals <- st_read(file.path(mydatadir, "medical_facilities/medical_facilities.shp"))
+h2o <- st_read(file.path(mydatadir, "wtrbdy/wtrbdy.shp"))
+
+# type = "n" not to plot, but sets xlim and ylim
+plot(hospitals$geometry, type = "n", axes = TRUE)
+# water
+plot(h2o$geometry, col = "cyan", border = 0, add = TRUE)
+# ZIP code areas
+plot(zip_wa$shape, add = TRUE, col = 0, border = 1)
+# hospital points
+plot(hospitals$geometry, add = TRUE)
+box()
+
+# different coordinates 
+# st_crs(hospitals)
+# st_crs(zip_wa)
+```
+
+## Exporting data
+
+```{r}
+# st_write(obj = zip_wa, dsn = file.path(mydatadir, "zip_wa.shp"))
+st_write(obj = pts, dsn = file.path(mydatadir, "r_gis.gpkg"), layer = "pts")
+st_write(obj = lnstr, dsn = file.path(mydatadir, "r_gis.gpkg"), layer = "lnstr")
+st_write(obj = plygn, dsn = file.path(mydatadir, "r_gis.gpkg"), layer = "plygn")
+st_write(obj = zip_wa, dsn = file.path(mydatadir, "r_gis.gpkg"), layer = "zip_wa")
+  
+```
+
+## Coordinates 
+
+```{r}
+snxy <- data.frame(name = "Space Needle", x = -122.3493, y = 47.6205)
+space_needle <- st_as_sf(snxy, coords = c("x", "y"))
+st_crs(space_needle)
+
+st_crs(space_needle) <- 4326
+st_crs(space_needle)
+
+library(rgdal)
+epsg <- make_EPSG()
+utm10 <- epsg[grep("UTM.*10", epsg$note),]
+kable(utm10) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+
+kable(epsg %>%filter(code == 2927)) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+
+```
+```{r}
+(space_needle_utm10 <- space_needle %>% st_transform(26910))
+(space_needle <- space_needle %>% st_transform(26910))
+
+# st_crs(hospitals)
+# st_crs(zip_wa)
+# st_crs(h2o)
+
+h2o <- h2o %>% st_transform(4326)
+hospitals <- hospitals %>% st_transform(4326)
+
+```
+
+## Geoprocessing
+
+### Buffering 
+
+```{r}
+# create the points
+snxy <- data.frame(name = "Space Needle", x = -122.3493, y = 47.6205)
+space_needle <- st_as_sf(snxy, coords = c("x", "y"), crs = 4326)
+shxy <- data.frame(name = "Savery Hall", x = -122.3083, y = 47.6572)
+savery_hall <- st_as_sf(shxy, coords = c("x", "y"), crs = 4326)
+zooxy <- data.frame(name = "Woodland Park Zoo", x = -122.3543, y = 47.6685)
+wp_zoo <- st_as_sf(zooxy, coords = c("x", "y"), crs = 4326)
+pts <- rbind(space_needle, savery_hall, wp_zoo)
+
+# make the buffer with inline transforms
+pts_buf_1km <- pts %>% st_transform(26910) %>% st_buffer(dist = 1000) %>% st_transform(2926)
+# crs to be converted to Cartesian projected coordinate for the same measure of distance. 
+
+# write to the GPKG
+mygpkg <- file.path(mydatadir, "r_gis.gpkg")
+st_write(obj = pts_buf_1km, dsn = mygpkg, layer = "pts_buf_1km", quiet = TRUE, update = TRUE)
+
+```
+
+```{r}
+if(! exists("kctrans")){
+    kctrans <- st_read(
+        file.path(mydatadir, "Metro_Transportation_Network_TNET_in_King_County__trans_network_line.shp"),
+        quiet = TRUE)
+}
+
+# freeways are KC_FCC_ID = F
+kcfwy <- kctrans %>% filter(KC_FCC_ID == "F")
+
+# buffer
+kcfwy_buf_500ft <- kcfwy %>% st_transform(2926) %>% st_buffer(500)
+
+# write to the GPKG
+mygpkg <- file.path(mydatadir, "r_gis.gpkg")
+st_write(obj = kcfwy_buf_500ft, dsn = mygpkg, layer = "kcfwy_buf_500ft", quiet = TRUE, update = TRUE)
+
+```
+
+### Point-in-polygon
+
+```{r}
+# if no API key,
+# acs5_2018_bg <- st_read(dsn = file.path(mydatadir, "census.gpkg"), layer = "acs5_2018_bg", quiet = TRUE)
+# st_crs(acs5_2018_bg) <- 2926
+
+# cache data
+options(tigris_use_cache = TRUE)
+# where to store data
+tigris_cache_dir <- mydatadir
+
+# if you have your API key, enter it here rather than using the system environment variable
+# myapikey <- "foobar"
+myapikey <- Sys.getenv("CENSUS_API_KEY")
+census_api_key(myapikey)
+
+# get the data and project it to match the bus stops, also calculate the area
+acs5_2018_bg <- get_acs(
+    geography = "block group",
+    variables = c(medfamincome="B19113_001"),
+    state = "WA",
+    county = "King",
+    geometry = TRUE,
+    moe = 95,
+    cache_table = TRUE, 
+    output = "wide") %>% # or tidy
+    st_transform(2926)  %>%
+    mutate(area_ft = as.numeric(st_area(.)))
+
+colnames(acs5_2018_bg) <- tolower(colnames(acs5_2018_bg))
+
+```
+
+```{r}
+
+acs5_2018_bg %>%
+    ggplot() +
+    geom_sf(aes(fill = medfamincomee), size = .25) +
+    scale_fill_viridis_c() + 
+    theme_void()
+
+```
+
+
+```{r}
+
+busstop <- st_read(
+    file.path(mydatadir, "busstop/busstop.shp"), quiet = TRUE) 
+st_crs(busstop) <- 2926
+
+colnames(busstop) <- tolower(colnames(busstop))
+
+print(colnames(busstop))
+
+busstop <- busstop %>% st_join(acs5_2018_bg)
+
+print(colnames(busstop))
+
+# tabulate the count of transit stops
+nbusstop <- busstop %>% 
+    group_by(geoid) %>% 
+    summarise(n_busstop = n(), 
+              density_ha = n() / min(area_ft) * 107639 , 
+              medfamincomee = min(medfamincomee))
+
+nbusstop %>% ggplot(aes(x = medfamincomee, y = density_ha)) + 
+    geom_point() + 
+    geom_smooth(method = "lm") +
+    xlab("block group median family income, ACS-5, 2018") + ylab("transit stop density per ha")
+
+pander(
+    summary(
+        lm(data = nbusstop, medfamincomee ~ density_ha)))
+
+```
+
+### Polygon-on-polygon
+
+```{r}
+nhood <- st_read(
+    file.path(mydatadir, "Community_Reporting_Areas.shp"), 
+    quiet = TRUE) %>%
+    st_transform(2926)
+names(nhood) = tolower(names(nhood))
+
+# get the data and project it to match the bus stops, also calculate the area
+acs5_2018_trt <- get_acs(
+    year = 2018,
+    geography = "tract",
+    variables = c(n="B06012_001", n_pov="B06012_002"),
+    state = "WA",
+    county = "King",
+    geometry = TRUE,
+    moe = 95,
+    cache_table = TRUE, 
+    output = "wide") %>%
+    st_transform(2926) %>%
+    mutate(area_ft_tract = as.numeric(st_area(.)))
+
+colnames(acs5_2018_trt) <- tolower(colnames(acs5_2018_trt))
+```
+
+
+```{r}
+nhood_trt <- st_intersection(x = nhood, acs5_2018_trt) %>% 
+    mutate(area_ft_intersect = as.numeric(st_area(.)),
+           n_est = ne * as.numeric(st_area(.)) / area_ft_tract, 
+           n_est_pov = n_pove * as.numeric(st_area(.)) / area_ft_tract)
+
+nhood_pov <- nhood_trt %>% 
+    group_by(gen_alias) %>% 
+    summarize(
+        neighdist = first(neighdist),
+        n = sum(n_est), 
+        n_pov = sum(n_est_pov), 
+        pct_pov = round(sum(n_est_pov) / sum(n_est) * 100, 1))
+
+
+nhood_pov %>%
+    ggplot() +
+    geom_sf(aes(fill = pct_pov), size = .25) +
+    scale_fill_viridis_c() + 
+    theme_void()
+
+
+nhood_pov %>%
+    ggplot(aes(x = reorder(gen_alias, pct_pov), y=pct_pov)) +
+    geom_bar(stat = "identity") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+    xlab("neighborhood") + ylab("% living under\nfederal poverty level")
+
+st_write(obj = nhood_pov, 
+         dsn = mygpkg, 
+         layer = "nhood_pov", 
+         quiet = TRUE, 
+         update = TRUE, 
+         delete_layer = TRUE)
+
+st_write(obj = 
+             st_union(kcfwy_buf_500ft), 
+         dsn = mygpkg, 
+         layer = "kcfwy_buf_500ft_union", 
+         quiet = TRUE, update = TRUE)
+
+
+```
+
+```{r}
+
+# summarize == union
+districts <- nhood_pov %>%
+    group_by(neighdist) %>%
+    summarise(
+        n = sum(n), 
+        n_pov = sum(n_pov),
+        pct_pov = round(sum(n_pov) / sum(n) * 100, 1))
+
+# save
+st_write(obj = districts, dsn = mygpkg, layer = "districts", quiet = TRUE, update = TRUE, delete_layer = TRUE)
+
+
+```
+
+## Leaflet map
+
+```{r}
+mapview(nhood_pov, zcol = "pct_pov", legend = TRUE)
+
+```
+
+```{r}
+# CRS
+nhood_pov_4326 <- nhood_pov %>% st_transform(4326)
+
+# make a label with the count of persons, persons below poverty, and % poverty
+nhood_pov_4326$mylab <- sprintf("n_pov=%s<br>n=%s<br>%s<br>", 
+                                round(nhood_pov_4326$n_pov, 0), 
+                                round(nhood_pov_4326$n, 0), 
+                                paste("pov=", nhood_pov_4326$pct_pov, "%", sep=""))
+
+l <- leaflet(data = nhood_pov_4326) %>%
+    addPolygons(popup = ~mylab, weight = 2) %>%
+    addTiles()
+l
+```
+
+```{r}
+# CRS
+nhood_pov_4326 <- nhood_pov %>% st_transform(4326)
+
+mypalette <- colorQuantile(palette = "viridis", domain = nhood_pov_4326$pct_pov, n = 4)
+
+# make a label with the count of persons, persons below poverty, and % poverty
+nhood_pov_4326$mylab <- sprintf("%s<br>%s<br>", 
+                                nhood_pov_4326$gen_alias, 
+                                paste("pov=", nhood_pov_4326$pct_pov, "%", sep=""))
+
+l <- leaflet(data = nhood_pov_4326) %>%
+    addPolygons(popup = ~mylab, 
+                weight = 2, 
+                fillColor = ~mypalette(pct_pov),
+                opacity = 0.7) %>%
+    addTiles() %>%
+    addLegend(pal=mypalette, values=~pct_pov, opacity=0.7, title = "% below poverty", position = "bottomleft" )
+
+l
+```
+
+
+```{r}
+# CRS
+nhood_pov_4326 <- nhood_pov %>% st_transform(4326)
+
+# hospitals
+hospitals <- st_read(file.path(mydatadir, "medical_facilities", "medical_facilities.shp"), quiet = TRUE) %>% st_transform(4326)
+
+mypalette <- colorQuantile(palette = "viridis", domain = nhood_pov_4326$pct_pov, n = 4)
+
+# make a label with the count of persons, persons below poverty, and % poverty
+nhood_pov_4326$mylab <- sprintf("%s<br>%s<br>", 
+                                nhood_pov_4326$gen_alias, 
+                                paste("pov=", nhood_pov_4326$pct_pov, "%", sep=""))
+
+l <- leaflet(data = nhood_pov_4326) %>%
+    addPolygons(popup = ~mylab, 
+                weight = 2, 
+                fillColor = ~mypalette(pct_pov),
+                opacity = 0.7) %>%
+    addTiles() %>%
+    addLegend(pal=mypalette, values=~pct_pov, opacity=0.7, title = "% below poverty", position = "bottomleft" )
+
+l <- addCircleMarkers(map = l, 
+                     data = hospitals,
+                     radius = 5, 
+                     weight = 1,
+                     opacity = 0.9,
+                     fillOpacity = 0.5,
+                     label = ~ABB_NAME)
+
+l
+
+```
+
